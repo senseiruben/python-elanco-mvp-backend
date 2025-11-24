@@ -1,4 +1,4 @@
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Query
 import pandas as pd
 from datetime import datetime, date
 from typing import Optional
@@ -7,19 +7,26 @@ app = FastAPI()
 
 def dataframe_validation(dataframe):
         """
-        Performs data validation on ingested tick data.
+        Performs data validation and transformation on ingested tick data.
 
-        Steps:
-        1. Checks for Missing values
-        2. Parses 'date' column into ISO8601 format
-        3. Checks Data Uniqueness
+        Tasks:
+        1. Checks for Missing (NaN) values.
+        2. Changes 'date' columns into datetime objects.
+        3. Ensures 'id' column contains no duplicates.
 
-        Raises AssertionError if validation fails
+        Args:
+            dataframe: Contains excel data.
+        
+        Returns:
+            pd.dataframe: Complete validation and transformation of original data.
+
+        Raises:
+            AssertionError: If validation fails.
         """
-        # Ensure data has no missing values
+        # 1. Ensure data has no missing values
         assert dataframe.isna().sum().sum() == 0, "Dataset contains missing values"
 
-        # Date format Validation
+        # 2. Transform into datetime format
         dataframe['date'] = pd.to_datetime(
             dataframe['date'], # gets date column
             format="%Y-%m-%dT%H:%M:%S", # ensures ISO 8601 format
@@ -29,13 +36,13 @@ def dataframe_validation(dataframe):
         failed_rows = dataframe['date'].isna().sum()
         assert failed_rows == 0, "Date format incorrect"
 
-        # ID uniqueness validation
+        # 3. ID uniqueness validation
         assert dataframe['id'].is_unique, "Data ids should be unique"
 
         print("Validation tests passed")
         return dataframe
 
-# ensure dataframe is created and validated
+# Data ingestion
 try:
     df = pd.read_excel('../data/Tick Sightings.xlsx')
     df = dataframe_validation(df)
@@ -44,8 +51,10 @@ except FileNotFoundError:
     df = pd.DataFrame()
 except AssertionError as err:
     print(f"Validation failed: {err}")
-
     df = pd.DataFrame() # fallback so app doesnt fail
+
+
+# Endpoints
 
 @app.get("/sightings")
 def sightings( 
@@ -57,18 +66,22 @@ def sightings(
     """
     Retrieves tick sightings with optional filters
 
-    location: Provides sightings in that city
-    specific_date: Provides sightings for a specified date
-    start_date: Provides sightings after start_date
-    end_date: Provides sightings after end_date
+    Args:
+        location (string, optional): case-insensitive, looks for city.
+        specific_date (date, optional): Exact date search in format (YYYY/MM/DD).
+        start_date (datetime, optional): Filters results to be on or after this date.
+        end_date (datetime, optional): Filters results to be on or before this date.
+
+    Returns:
+        list: a list of sighting records in JSON format.
     """
     if df.empty:
-        raise HTTPException(status_code=503, detail="DData unavailable")
+        raise HTTPException(status_code=503, detail="Data unavailable")
     
     copied_data = df.copy()
     
     if location:
-        copied_data = copied_data[copied_data['location'].str.contains(location, case=False)]
+        copied_data = copied_data[copied_data['location'].str.contains(location, case=False, na=False)]
 
     if specific_date:
         copied_data = copied_data[copied_data['date'].dt.date == specific_date]
@@ -88,9 +101,15 @@ def sightings(
 def sightings_id(id: str):
     """
     Finds and returns returns sighting by given id
+
+    Args:
+        id (string): Unique identifier
+
+    Returns:
+        dict: Single sighting record
     """
     if df.empty:
-        raise HTTPException(status_code=503, detail="DData unavailable")
+        raise HTTPException(status_code=503, detail="Data unavailable")
     
     result = df[df['id'] == id]
     if result.empty:
@@ -101,27 +120,47 @@ def sightings_id(id: str):
 def region_counts(species: Optional[str] = None):
     """
     Counts then returns the total number of sightings for each region.
-    If 'species' is provided, it filters the data to that specific species first.
+    
+    Args:
+        species (string, optional): Filters count to specific species.
+    
+    Return:
+        dictionary: Region name and its count.
+
     """
     if df.empty:
-        raise HTTPException(status_code=503, detail="DData unavailable")
+        raise HTTPException(status_code=503, detail="Data unavailable")
     
     copied_data = df.copy()
 
     if species:
-        copied_data = copied_data[copied_data['species'].str.contains(species, case=False)]
+        copied_data = copied_data[copied_data['species'].str.contains(species, case=False, na=False)]
 
     if copied_data.empty:
         raise HTTPException(status_code=404, detail="Empty dataset")
     return copied_data['location'].value_counts().to_dict()
 
 @app.get("/reports/trends")
-def region_trends():
+def region_trends(frequency: str = Query("M", enum=["W","M"])):
     """
-    Placeholder
+    Returns tick sighting trends based on frequency.
+
+    Args:
+        frequency (string): 'W' for weekly and 'M' for monthly.
+
+    Returns:
+        dict: Dates (YYYY-MM-DD format) and sighting counts.
     """
     if df.empty:
-        raise HTTPException(status_code=503, detail="DData unavailable")
+        raise HTTPException(status_code=503, detail="Data unavailable")
     
-    return {"Message": "Not implemented yet"}
+    # set date to index to allow sampling
+    copied_df = df.set_index('date')
+
+    # resample counts rows based on time
+    trends = copied_df.resample(frequency).size()
+
+    # assigns it
+    trends.index = trends.index.strftime('%Y-%m-%d')
+    return trends.to_dict()
 
