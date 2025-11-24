@@ -2,6 +2,8 @@ from fastapi import FastAPI, HTTPException, Query
 import pandas as pd
 from datetime import datetime, date
 from typing import Optional
+import os
+
 app = FastAPI()
 
 
@@ -43,8 +45,10 @@ def dataframe_validation(dataframe):
         return dataframe
 
 # Data ingestion
+script_dir = os.path.dirname(os.path.abspath(__file__))
+file_path = os.path.join(script_dir, '..', 'data', 'Tick Sightings.xlsx')
 try:
-    df = pd.read_excel('../data/Tick Sightings.xlsx')
+    df = pd.read_excel(file_path)
     df = dataframe_validation(df)
 except FileNotFoundError:
     print("File not found")
@@ -113,7 +117,7 @@ def sightings_id(id: str):
     
     result = df[df['id'] == id]
     if result.empty:
-        raise HTTPException(status_code=404, detail="Empty dataset")
+        raise HTTPException(status_code=404, detail=f"id not found: {id}")
     return result.to_dict(orient="records")[0]
 
 @app.get("/reports/region-counts")
