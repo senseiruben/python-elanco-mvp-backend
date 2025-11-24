@@ -1,0 +1,13 @@
+# Ignore files that docker doesn't need
+.venv
+venv
+env
+Plan.docx
+README.md
+.git
+.gitignore
+.vscode
+__pycache__
+*.pyc
+*.pyo
+*.pyd
